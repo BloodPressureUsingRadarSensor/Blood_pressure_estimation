@@ -13,7 +13,7 @@ DATA_PORT = "COM5"
 USER_BAUD = 115200
 DATA_BAUD = 921600
 
-CFG_FILE = r"C:\Users\KISHO\Documents\spml\xwr68xx_profile_VitalSigns_20fps_Front.cfg"
+CFG_FILE = r"E:\Document\spml\xwr68xx_profile_VitalSigns_20fps_Front.cfg"
 
 FPS = 20
 RUN_TIME = 30  # Fixed 30 seconds collection
@@ -21,7 +21,7 @@ BUF_LEN = 400  # Buffer for 20 seconds of data for feature extraction
 MAGIC = b'\x02\x01\x04\x03\x06\x05\x08\x07'
 
 # ================= CSV SETUP =================
-CSV_DIR = r"C:\Users\KISHO\Documents\spml\BP_Datasets"
+CSV_DIR = r"E:\Document\spml\BP_Datasets"
 os.makedirs(CSV_DIR, exist_ok=True)
 
 # Generate unique filename with timestamp
@@ -44,6 +44,17 @@ csv_writer.writerow([
     "ReliabilityScore"
 ])
 csv_file.flush()
+
+last_status_len = 0
+
+def write_status(message):
+    global last_status_len
+    padded = message
+    if last_status_len > len(message):
+        padded += " " * (last_status_len - len(message))
+    sys.stdout.write("\r" + padded)
+    sys.stdout.flush()
+    last_status_len = len(message)
 
 # ================= DATA VALIDATION HELPERS =================
 def calculate_reliability(hr, rr, range_m, hr_history, range_history):
@@ -214,6 +225,7 @@ dbp_history = []
 reliability_history = []
 time_history = []
 start_time = time.time()
+sample_count = 0
 
 # ================= MAIN LOOP =================
 try:
@@ -252,7 +264,7 @@ try:
                         
                         # Improved Range Tracking
                         last_r = range_history[-1] if range_history else None
-                        range_m = extract_range_m(pay[off:l], last_r)
+                        range_m = extract_range_m(pay[off:off+l], last_r)
                         
                         range_sm = 0
                         if range_m:
@@ -262,11 +274,15 @@ try:
 
                         heart_phase.append(hp)
                         heart_phase[:] = heart_phase[-BUF_LEN:]
+                        sample_count += 1
 
-                        # Print debug info every 20 packets
-                        if len(heart_phase) % 20 == 0:
-                            sys.stdout.write(f"\rCaptured {len(heart_phase)} samples... (Range: {range_sm:.2f}m)")
-                            sys.stdout.flush()
+                        # During the warmup period, show collection progress until
+                        # enough heart samples are available for feature extraction.
+                        if len(heart_phase) < 100 and sample_count % 20 == 0:
+                            write_status(
+                                f"Warming up: {len(heart_phase):3d}/100 heart samples"
+                                f" | Range: {range_sm:.2f}m"
+                            )
 
                         if len(heart_phase) >= 100:
                             heart_wave = bandpass(smooth(detrend(np.unwrap(heart_phase))), 0.8, 2.5, FPS)
@@ -300,8 +316,13 @@ try:
                                 
                                 # Console Update with Quality Feedback (Fixed flickering)
                                 status = "TRUSTED" if rel_score > 70 else "UNSTABLE" if rel_score > 40 else "FAKE/NOISY"
-                                sys.stdout.write(f"\r\033[KTime: {time.time()-start_time:4.1f}s | HR: {hr:5.1f} | BP: {sbp:.0f}/{dbp:.0f} | Quality: {rel_score}% ({status})")
-                                sys.stdout.flush()
+                                write_status(
+                                    f"Time: {time.time()-start_time:4.1f}s"
+                                    f" | HR: {hr:5.1f}"
+                                    f" | RR: {rr:4.1f}"
+                                    f" | BP: {sbp:.0f}/{dbp:.0f}"
+                                    f" | Quality: {rel_score}% ({status})"
+                                )
                     except Exception as e:
                         print(f"\nUnpacking error: {e}")
 
